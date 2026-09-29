@@ -1,0 +1,13 @@
+{
+  "_comment": "GLM / Z.ai template. Copy to providers.json, export ZAI_API_KEY holding your key, and verify the base_url and model ids against Z.ai's current docs. Add more entries to 'keys' (env var names) to rotate between several keys.",
+  "providers": {
+    "glm": {
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "keys": ["ZAI_API_KEY"],
+      "models": {
+        "glm-4.8": "glm-4.8",
+        "glm-4.8-air": "glm-4.8-air"
+      }
+    }
+  }
+}

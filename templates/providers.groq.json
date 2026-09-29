@@ -1,0 +1,12 @@
+{
+  "_comment": "Groq template. Copy to providers.json, export GROQ_API_KEY holding your key, and verify the base_url and model ids against Groq's current docs.",
+  "providers": {
+    "groq": {
+      "base_url": "https://api.groq.com/openai/v1",
+      "keys": ["GROQ_API_KEY"],
+      "models": {
+        "llama-3.3-70b-versatile": "llama-3.3-70b-versatile"
+      }
+    }
+  }
+}

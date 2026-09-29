@@ -1,0 +1,23 @@
+{
+  "_comment": "Example providers.json for keysmith showing every field, merged across two providers. Copy to providers.json, fill in the env var NAMES that hold your keys (never the keys themselves), and verify each base_url and model id with your provider's current docs. Fields per provider: base_url (required, https unless it is a loopback local dev endpoint with allow_insecure), keys (required, env var names, round-robin order, >= 1), models (required, public name -> upstream model id; public names must not contain '/'), cooldown_seconds (optional, default 60: how long a key rests after 3 consecutive auth failures), timeout_seconds (optional, default 120), allow_insecure (optional, default false; only ever useful for http:// loopback local dev endpoints such as a local vLLM — keysmith refuses non-loopback http because it would send your bearer key in cleartext).",
+  "providers": {
+    "glm": {
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "keys": ["ZAI_API_KEY", "ZAI_API_KEY_BACKUP"],
+      "models": {
+        "glm-4.8": "glm-4.8",
+        "glm-4.8-air": "glm-4.8-air"
+      },
+      "cooldown_seconds": 60,
+      "timeout_seconds": 120
+    },
+    "openai": {
+      "base_url": "https://api.openai.com/v1",
+      "keys": ["OPENAI_API_KEY"],
+      "models": {
+        "gpt-4.1": "gpt-4.1",
+        "gpt-4.1-mini": "gpt-4.1-mini"
+      }
+    }
+  }
+}

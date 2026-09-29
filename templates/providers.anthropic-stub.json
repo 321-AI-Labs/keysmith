@@ -1,0 +1,4 @@
+{
+  "_comment": "STUB — Anthropic-native /v1/messages is NOT implemented in keysmith v0.1. This file intentionally configures zero providers; it loads successfully so tooling can rely on it. If your Anthropic plan offers an OpenAI-compatible endpoint, add it as a normal provider with an https base_url instead.",
+  "providers": {}
+}

@@ -1,0 +1,13 @@
+{
+  "_comment": "vLLM local dev template — the sanctioned local dev endpoint case. http is accepted here ONLY because the host is loopback AND allow_insecure is true; keysmith refuses non-loopback http base URLs because they would send your bearer key in cleartext. Set VLLM_API_KEY to any nonempty string (vLLM ignores it unless started with --api-key). Adjust the port and model ids to your vLLM server.",
+  "providers": {
+    "vllm": {
+      "base_url": "http://127.0.0.1:8000/v1",
+      "keys": ["VLLM_API_KEY"],
+      "models": {
+        "local-model": "local-model"
+      },
+      "allow_insecure": true
+    }
+  }
+}

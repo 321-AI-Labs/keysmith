@@ -1,0 +1,13 @@
+{
+  "_comment": "OpenAI template. Copy to providers.json, export OPENAI_API_KEY holding your key, and verify the base_url and model ids against OpenAI's current docs. Public model names (left side of 'models') are what clients send after 'openai/'; the right side is the id OpenAI expects. Optional fields: cooldown_seconds (default 60), timeout_seconds (default 120), allow_insecure (default false).",
+  "providers": {
+    "openai": {
+      "base_url": "https://api.openai.com/v1",
+      "keys": ["OPENAI_API_KEY"],
+      "models": {
+        "gpt-4.1": "gpt-4.1",
+        "gpt-4.1-mini": "gpt-4.1-mini"
+      }
+    }
+  }
+}

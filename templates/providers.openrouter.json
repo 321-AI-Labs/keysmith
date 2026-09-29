@@ -1,0 +1,12 @@
+{
+  "_comment": "OpenRouter template. Copy to providers.json, export OPENROUTER_API_KEY holding your key, and verify the base_url and model ids against OpenRouter's current docs. Note the model map: public names (left side) must not contain '/'; upstream ids (right side) may.",
+  "providers": {
+    "openrouter": {
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys": ["OPENROUTER_API_KEY"],
+      "models": {
+        "auto": "openrouter/auto"
+      }
+    }
+  }
+}
