@@ -14,6 +14,7 @@ import time
 from collections.abc import Sequence
 
 from . import __version__
+from . import ui_strings
 from .config import ConfigError, load_config
 from .redact import SecretVault
 from .server import KeysmithServer
@@ -65,7 +66,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     vault = SecretVault()
     spend_log = SpendLog(args.spend_log)
-    server = KeysmithServer(cfg, token, spend_log, vault, host=args.host, port=args.port)
+    server = KeysmithServer(
+        cfg, token, spend_log, vault,
+        host=args.host, port=args.port, config_path=args.config,
+    )
     try:
         server.start()
     except OSError as exc:
@@ -75,6 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"keysmith {__version__} listening on {server.url} "
         f"(config: {args.config}; spend log: {args.spend_log})"
     )
+    print(ui_strings.STARTUP_DASHBOARD_LINE.format(url=f"{server.url}/"))
     print("Press Ctrl+C to stop.")
     try:
         while True:

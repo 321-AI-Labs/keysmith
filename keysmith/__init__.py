@@ -5,7 +5,7 @@ and honest limitations.
 """
 
 from .redact import REDACTED, SecretVault, redact
-from .config import Config, ConfigError, ProviderConfig, load_config
+from .config import Config, ConfigError, ProviderConfig, load_config, validate_config_data
 from .keys import AUTH_FAILURE_LIMIT, KeyPool, KeyState, read_key_value
 from .upstream import (
     UpstreamError,
@@ -35,6 +35,7 @@ __all__ = [
     "ConfigError",
     "ProviderConfig",
     "load_config",
+    "validate_config_data",
     "AUTH_FAILURE_LIMIT",
     "KeyPool",
     "KeyState",

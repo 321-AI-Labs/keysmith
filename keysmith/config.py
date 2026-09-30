@@ -128,8 +128,8 @@ def load_config(path: str | os.PathLike[str]) -> Config:
     """Read and validate a providers.json file.
 
     Raises ConfigError (never a raw OSError or JSONDecodeError) for an
-    unreadable file, invalid JSON, or any schema violation described in the
-    public interface contract.
+    unreadable file, invalid JSON, or any schema violation described in
+    the public interface contract.
     """
     try:
         with open(path, "r", encoding="utf-8") as handle:
@@ -140,6 +140,19 @@ def load_config(path: str | os.PathLike[str]) -> Config:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ConfigError(f"config file is not valid JSON: {exc}") from exc
+    return _validate_root(data)
+
+
+def validate_config_data(data: object) -> Config:
+    """Validate an already-parsed providers.json document (a dict as
+    produced by ``json.loads``).
+
+    Public wrapper around the exact validator ``load_config`` uses, added
+    for the setup wizard: the wizard must never invent its own schema
+    rules. Raises ConfigError with a path-naming message on any
+    violation. Zero validator-behavior change relative to v0.1: the
+    underlying ``_validate_root`` is untouched.
+    """
     return _validate_root(data)
 
 

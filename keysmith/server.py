@@ -23,6 +23,7 @@ import dataclasses
 import datetime
 import hmac
 import json
+import os
 import threading
 import time
 import traceback
@@ -31,10 +32,11 @@ from collections.abc import Mapping, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import MappingProxyType
 
-from . import keys, upstream
+from . import keys, ui_api, ui_page, upstream, wizard
+from . import ui_strings
 from .config import Config, ProviderConfig
 from .redact import SecretVault
-from .spendlog import SpendLog, SpendRecord
+from .spendlog import SpendLog, SpendLogError, SpendRecord
 
 AUTH_FAILURE_STATUSES: frozenset[int] = frozenset({401, 403})
 MAX_BODY_BYTES: int = 10_000_000
@@ -452,6 +454,25 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def _handle_get(self) -> None:
+        path = self._path()
+        if path == "/":
+            # THE one pre-auth route: the static dashboard shell. A
+            # browser cannot attach a Bearer header to the navigation
+            # that first loads a page, so the login page itself must be
+            # reachable without one. The shell is byte-identical for
+            # every client and every server (zero config, spend, token
+            # or URL data; pinned by tests) and every dashboard API
+            # route below stays behind the token gate: no endpoint that
+            # carries data ever answers an unauthenticated request.
+            # Everything still flows through _emit, so even these bytes
+            # pass the redact() choke point.
+            self._emit(
+                200,
+                ui_page.DOCUMENT_BYTES,
+                ui_page.CONTENT_TYPE,
+                body_drained=not self._unread_body(),
+            )
+            return
         if not self._check_token():
             # GETs never write spend records (spend scope is POST-only).
             self._emit(
@@ -461,15 +482,73 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
                 body_drained=not self._unread_body(),
             )
             return
-        path = self._path()
         if path == "/v1/models":
             self._emit_models()
+            return
+        if path == "/api/status":
+            self._emit_api_status()
+            return
+        if path == "/api/spend":
+            self._emit_api_spend()
+            return
+        if path == "/api/connections":
+            self._emit_api_connections()
+            return
+        if path == "/api/wizard/current":
+            self._emit_api_wizard_current()
             return
         self._emit(
             404,
             error_json(404, f"unknown path '{path}'", "invalid_request_error", code="path_not_found"),
             _LOCAL_JSON,
             body_drained=not self._unread_body(),
+        )
+
+    # ------------------------------------------------------------------
+    # Dashboard JSON endpoints. Pure payload builders live in ui_api;
+    # every response goes through _emit like everything else.
+    # ------------------------------------------------------------------
+
+    def _emit_json_payload(self, payload: dict[str, object]) -> None:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        self._emit(200, body, _LOCAL_JSON, body_drained=not self._unread_body())
+
+    def _emit_api_status(self) -> None:
+        keysmith = self.server.keysmith
+        payload = ui_api.status_payload(
+            keysmith.config, keysmith.pools, time.monotonic()
+        )
+        self._emit_json_payload(payload)
+
+    def _emit_api_spend(self) -> None:
+        keysmith = self.server.keysmith
+        try:
+            records = keysmith.spend_log.read_all()
+        except SpendLogError as exc:
+            self._emit(
+                500,
+                error_json(
+                    500,
+                    ui_strings.SPEND_LOG_UNREADABLE + str(exc),
+                    "keysmith_internal",
+                ),
+                _LOCAL_JSON,
+                body_drained=not self._unread_body(),
+            )
+            return
+        self._emit_json_payload(ui_api.spend_payload(records))
+
+    def _emit_api_connections(self) -> None:
+        keysmith = self.server.keysmith
+        self._emit_json_payload(
+            ui_api.connections_payload(keysmith.config, keysmith.url)
+        )
+
+    def _emit_api_wizard_current(self) -> None:
+        keysmith = self.server.keysmith
+        document = wizard.read_current_document(keysmith.config_path)
+        self._emit_json_payload(
+            wizard.current_state_payload(keysmith.config_path, document)
         )
 
     def _emit_models(self) -> None:
@@ -504,6 +583,23 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
             )
             return
         path = self._path()
+        if path == "/api/wizard/preview":
+            # Wizard POSTs obey the chat body laws (Content-Length
+            # required, MAX_BODY_BYTES cap, drain-or-close) and never
+            # write a spend record: spend scope stays chat-only.
+            document = self._read_wizard_body()
+            if document is None:
+                return
+            result = wizard.preview_document(document)
+            self._emit_json_payload(result.payload)
+            return
+        if path == "/api/wizard/write":
+            document = self._read_wizard_body()
+            if document is None:
+                return
+            result = wizard.write_document(self.server.keysmith.config_path, document)
+            self._emit_json_payload(result.payload)
+            return
         if path != "/v1/chat/completions":
             # Diagnostics-only: unknown paths never write a spend record.
             self._emit(
@@ -514,6 +610,67 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
             )
             return
         self._handle_chat(start)
+
+    def _read_wizard_body(self) -> object | None:
+        """Read one JSON POST body for the wizard routes under the SAME
+        body laws as chat (Content-Length required, invalid length 400,
+        over-limit 413 without reading, UTF-8 JSON object required).
+        Emits the matching error envelope and returns None on failure;
+        returns the parsed object otherwise. Writes no spend record.
+
+        The duplicated checks (instead of refactoring _handle_chat to
+        share them) are deliberate: the v0.1 chat path is tested,
+        released machinery and this build must not perturb it."""
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None:
+            self._emit(
+                411,
+                error_json(
+                    411,
+                    "Length Required: POST requests must carry a Content-Length (chunked bodies are not supported in v0.1)",
+                    "invalid_request_error",
+                    code="length_required",
+                ),
+                _LOCAL_JSON,
+                body_drained=False,
+            )
+            return None
+        try:
+            length = int(raw_length)
+        except ValueError:
+            self._emit(
+                400,
+                error_json(400, "invalid Content-Length header", "invalid_request_error"),
+                _LOCAL_JSON,
+                body_drained=False,
+            )
+            return None
+        if length > MAX_BODY_BYTES:
+            self._emit(
+                413,
+                error_json(
+                    413,
+                    f"request body exceeds the v0.1 limit of {MAX_BODY_BYTES} bytes",
+                    "invalid_request_error",
+                    code="body_too_large",
+                ),
+                _LOCAL_JSON,
+                body_drained=False,
+            )
+            return None
+        body = self.rfile.read(length) if length > 0 else b""
+        self._body_read = True
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._emit(
+                400,
+                error_json(400, "request body must be valid UTF-8 JSON", "invalid_request_error", code="invalid_json"),
+                _LOCAL_JSON,
+                body_drained=True,
+            )
+            return None
+        return payload
 
     def _handle_chat(self, start: float) -> None:
         raw_length = self.headers.get("Content-Length")
@@ -706,6 +863,7 @@ class KeysmithServer:
         host: str = "127.0.0.1",
         port: int = 0,
         max_attempts: int | None = None,
+        config_path: str | os.PathLike[str] | None = None,
     ) -> None:
         # An empty or whitespace-only token is a
         # misconfiguration, not a security posture — with token='' a bare
@@ -723,6 +881,10 @@ class KeysmithServer:
         self.spend_log = spend_log
         self.vault = vault
         self.host = host
+        # The file the setup wizard writes. None (the default, and the
+        # shape every pre-v0.2 caller uses) means the wizard write path
+        # fails closed: nothing on this server can overwrite a config.
+        self.config_path = os.fspath(config_path) if config_path is not None else None
         self._requested_port = int(port)
         self._max_attempts = max_attempts
         pools = {
