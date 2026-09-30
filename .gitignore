@@ -1,4 +1,9 @@
 __pycache__/
 *.pyc
 spend.jsonl
-providers.local.json
+
+# Local copies of the provider config (the quickstart's `cp templates/...`
+# target). Contains env var NAMES, not key values, but it is per-machine
+# setup and must not dirty the tree.
+/providers.json
+/providers.local.json

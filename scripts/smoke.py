@@ -1,4 +1,4 @@
-"""DoD smoke check (charter line 43, item 2): keysmith round-trips end to
+"""Smoke check: keysmith round-trips end to
 end against an in-process fake upstream.
 
 Checks: (1) a chat request with the WRONG client token -> 401; (2) a chat

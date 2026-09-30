@@ -3,9 +3,16 @@ header-shaped strings, JSON bodies, error and traceback-shaped multi-line
 strings, plus overlap/longest-first, empty-secret guards and boundary
 placement cases."""
 
+import json
+import pathlib
+import sys
 import unittest
 
-from keysmith.redact import REDACTED, SecretVault, redact
+_REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from keysmith.redact import REDACTED, SecretVault, redact  # noqa: E402
 
 
 class RedactFunctionTests(unittest.TestCase):
@@ -100,6 +107,68 @@ class SecretVaultTests(unittest.TestCase):
     def test_vault_redact_without_secrets_is_identity(self):
         vault = SecretVault()
         self.assertEqual(vault.redact("nothing secret"), "nothing secret")
+
+
+class SecretVaultEscapedTwinTests(unittest.TestCase):
+    """SecretVault.register must also register the JSON-escaped twin of
+    every secret — ``json.dumps(secret)[1:-1]`` — so escaped serializations
+    (``\\u00e9``, ``\\"``, ``\\\\``) are redacted on every surface keysmith
+    emits or relays. Without the twin, a JSON body that carries the secret
+    escaped survives exact-substring redaction untouched, and the client
+    that json.loads the body sees the full secret."""
+
+    TWIN_KEYS = (
+        "sk-kéy-üñï-444",        # non-ASCII -> \uXXXX escapes
+        'sk-qu"ote-key-555',     # embedded double quote -> \"
+        "sk-back\\slash-key-666",  # embedded backslash -> \\
+        "sk-日本語-key-777",      # CJK -> \uXXXX escapes
+    )
+
+    def test_register_redacts_the_json_escaped_twin(self):
+        for key in self.TWIN_KEYS:
+            with self.subTest(key=key):
+                vault = SecretVault()
+                vault.register(key)
+                escaped = json.dumps(key)[1:-1]
+                self.assertNotIn(escaped, key, "fixture sanity: twin differs from raw")
+                out = vault.redact(f"echo {escaped} end")
+                self.assertNotIn(escaped, out, "escaped twin must be masked")
+                self.assertIn(REDACTED, out)
+
+    def test_register_redacts_raw_and_escaped_simultaneously(self):
+        vault = SecretVault()
+        vault.register("sk-kéy-üñï-444")
+        # The escaped twin in a PYTHON string literal is the literal
+        # backslash-u text json.dumps emits:
+        escaped_twin = json.dumps("sk-kéy-üñï-444")[1:-1]
+        text = f"a sk-kéy-üñï-444 b {escaped_twin} c"
+        out = vault.redact(text)
+        self.assertNotIn("sk-kéy", out)
+        self.assertEqual(out.count(REDACTED), 2)
+
+    def test_pure_ascii_twin_is_deduplicated(self):
+        # json.dumps of a plain ASCII secret escapes nothing: the twin IS
+        # the secret, and registering it must not double-count.
+        vault = SecretVault()
+        vault.register("sk-plain-AAA-111")
+        self.assertEqual(len(vault), 1)
+
+    def test_empty_and_whitespace_still_register_nothing(self):
+        vault = SecretVault()
+        vault.register("")
+        vault.register("   ")
+        self.assertEqual(len(vault), 0)
+
+    def test_twin_registration_survives_multiple_secrets(self):
+        vault = SecretVault()
+        for key in self.TWIN_KEYS:
+            vault.register(key)
+        text = " ".join(json.dumps(key)[1:-1] for key in self.TWIN_KEYS)
+        out = vault.redact(text)
+        for key in self.TWIN_KEYS:
+            self.assertNotIn(json.dumps(key)[1:-1], out)
+            self.assertNotIn(key, out)
+        self.assertEqual(out.count(REDACTED), len(self.TWIN_KEYS))
 
 
 if __name__ == "__main__":

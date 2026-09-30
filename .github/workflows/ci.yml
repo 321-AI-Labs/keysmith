@@ -1,0 +1,25 @@
+# keysmith CI: run the standard-library test suite on every push.
+#
+# The suite is stdlib-only by design (machine-checked by
+# tests/test_imports.py), so there is nothing to install: checkout,
+# Python 3.11 (the minimum version keysmith supports), and unittest.
+name: CI
+
+on:
+  push:
+
+jobs:
+  test:
+    name: python -m unittest discover (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run test suite
+        run: python -m unittest discover -s tests

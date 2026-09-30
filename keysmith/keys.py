@@ -13,7 +13,7 @@ import os
 import threading
 from collections.abc import Sequence
 
-AUTH_FAILURE_LIMIT: int = 3  # charter line 17: "fails auth 3 times"
+AUTH_FAILURE_LIMIT: int = 3  # a key that fails auth 3 times in a row cools down
 
 
 @dataclasses.dataclass(frozen=True)

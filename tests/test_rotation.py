@@ -1,4 +1,4 @@
-"""The DoD rotation tests (charter line 43, item 3).
+"""The rotation tests: cooldown failover, then recovery.
 
 Two keys, first fails auth 3x -> cooldown -> second key serves; recovery
 after cooldown elapses. Asserts via fake-upstream hit counts, not timing
@@ -11,6 +11,7 @@ import json
 import os
 import pathlib
 import shutil
+import sys
 import tempfile
 import time
 import unittest
@@ -18,12 +19,16 @@ import urllib.error
 import urllib.request
 from unittest import mock
 
-from keysmith.config import Config, ProviderConfig
-from keysmith.redact import REDACTED, SecretVault
-from keysmith.server import KeysmithServer
-from keysmith.spendlog import SpendLog
+_REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-from .fake_upstream import FakeUpstream
+from keysmith.config import Config, ProviderConfig  # noqa: E402
+from keysmith.redact import SecretVault  # noqa: E402
+from keysmith.server import KeysmithServer  # noqa: E402
+from keysmith.spendlog import SpendLog  # noqa: E402
+from tests.decoded_walk import walk_decoded_body, walk_decoded_jsonl  # noqa: E402
+from tests.fake_upstream import FakeUpstream  # noqa: E402
 
 KEY_A_ALIAS = "FAKE_KEY_A"
 KEY_B_ALIAS = "FAKE_KEY_B"
@@ -129,15 +134,26 @@ class SingleKeyExhaustionTests(_RotationBase):
     fail_auth = frozenset({"Bearer " + A_VALUE})
 
     def test_single_key_exhaustion_and_503(self):
-        for _ in range(3):
+        for attempt in range(3):
             status, body = self.chat()
             self.assertEqual(status, 502)
             text = body.decode("utf-8")
-            self.assertIn(REDACTED, text)  # error-string redaction proof
-            self.assertNotIn(A_VALUE, text)
+            # Decoded-walk standard: the body must parse, and every decoded
+            # string (and byte form) must be free of the key in raw and
+            # every escaped variant form (A_VALUE is pure ASCII, so its
+            # variant forms coincide with the raw value; the walk also
+            # proves every decoded string is clean, not just the envelope
+            # text).
+            walk_decoded_body(
+                self, body, (A_VALUE,),
+                context=f"rotation single-key 502 envelope (attempt {attempt + 1})",
+            )
             err = json.loads(text)["error"]
             self.assertEqual(err["upstream_status"], 401)
-            self.assertEqual(err["upstream_error"]["error"]["code"], "invalid_api_key")
+            # Client-facing envelopes carry upstream_status
+            # and a fixed, key-free message — no embedded upstream error
+            # body, even though the fake's 401 body echoes the bearer value.
+            self.assertNotIn("upstream_error", err)
             self.assertIn("failed authentication", err["message"])
 
         # Third failure triggered cooldown: no keys available.
@@ -153,7 +169,10 @@ class SingleKeyExhaustionTests(_RotationBase):
         self.assertEqual([r.error_kind for r in records], [None, None, None, "no_keys"])
         self.assertEqual([r.key_alias for r in records], [KEY_A_ALIAS] * 3 + [""])
         spend_text = self.spend_path.read_text(encoding="utf-8")
-        self.assertNotIn(A_VALUE, spend_text)
+        # Decoded-walk standard for the spend log — every
+        # line must parse, and every decoded string (and byte form) must be
+        # free of the key in raw and every escaped variant form.
+        walk_decoded_jsonl(self, spend_text, (A_VALUE,), context="rotation spend log")
         self.assertIn(KEY_A_ALIAS, spend_text)
 
 

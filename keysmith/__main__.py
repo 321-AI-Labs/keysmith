@@ -43,11 +43,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     token = os.environ.get("KEYSMITH_TOKEN")
-    if not token:
+    if not isinstance(token, str) or not token.strip():
         print(
-            "keysmith: KEYSMITH_TOKEN is not set. Export a local client token first "
-            "(any long random string) — clients must send it as "
-            "'Authorization: Bearer <KEYSMITH_TOKEN>'."
+            "keysmith: KEYSMITH_TOKEN is not set (or is whitespace-only). Export a "
+            "local client token first (any long random string) — clients must "
+            "send it as 'Authorization: Bearer <KEYSMITH_TOKEN>'."
         )
         return 2
 

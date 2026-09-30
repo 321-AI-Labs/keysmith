@@ -13,6 +13,42 @@ from .config import ProviderConfig
 
 _UPSTREAM_ERROR_KINDS = ("timeout", "connection", "tls", "unknown")
 
+# Fixed-vocabulary error kind derived from an upstream
+# error body's ``error.code`` via an allowlist map. Preserves why-it-failed
+# UX without re-serializing upstream data: the result is always one of the
+# four enum values, never upstream text.
+UPSTREAM_ERROR_KIND_ENUM = ("invalid_api_key", "quota", "rate_limited", "other")
+
+_ERROR_CODE_KIND_MAP = {
+    "invalid_api_key": "invalid_api_key",
+    "insufficient_quota": "quota",
+    "rate_limit_exceeded": "rate_limited",
+    "rate_limited": "rate_limited",
+}
+
+
+def upstream_error_kind(body: bytes) -> str:
+    """Map an upstream error body's ``error.code`` to a closed-vocabulary
+    kind: one of UPSTREAM_ERROR_KIND_ENUM.
+
+    Allowlist-only: an unknown, missing or non-string code — or a body that
+    is not UTF-8 JSON of the expected shape — yields ``'other'``. The
+    return value never embeds upstream data by construction.
+    """
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return "other"
+    if not isinstance(data, dict):
+        return "other"
+    error = data.get("error")
+    if not isinstance(error, dict):
+        return "other"
+    code = error.get("code")
+    if not isinstance(code, str):
+        return "other"
+    return _ERROR_CODE_KIND_MAP.get(code, "other")
+
 
 class UpstreamError(Exception):
     """Transport failure (DNS, refused, TLS, timeout).

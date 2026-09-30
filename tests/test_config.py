@@ -4,10 +4,15 @@ so a template typo fails the suite, not the quickstart."""
 import json
 import pathlib
 import shutil
+import sys
 import tempfile
 import unittest
 
-from keysmith.config import ConfigError, ProviderConfig, load_config
+_REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from keysmith.config import ConfigError, ProviderConfig, load_config  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 

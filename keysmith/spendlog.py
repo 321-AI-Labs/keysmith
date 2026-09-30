@@ -1,6 +1,6 @@
 """Append-only JSONL spend log.
 
-Charter line 18: a SpendRecord holds timestamp, provider, model, key ALIAS,
+A SpendRecord holds timestamp, provider, model, key ALIAS,
 status, latency and token counts — no other fields may ever exist. No
 request bodies, no response bodies, no key values. The mandatory redact
 callable on :meth:`SpendLog.append` is defense-in-depth on top of fields
@@ -14,6 +14,13 @@ import dataclasses
 import json
 import pathlib
 import threading
+
+# The client-controlled model string is capped at
+# record-build time so an unbounded model (a hostile client can send
+# megabytes inside the JSON body) cannot write megabyte JSONL lines. The
+# bound must comfortably exceed real '<provider>/<model>' identifiers
+# (longest real ids are ~60 chars) while keeping lines short.
+MAX_MODEL_CHARS: int = 256
 
 
 class SpendLogError(ValueError):
@@ -35,6 +42,13 @@ class SpendRecord:
     prompt_tokens: int | None
     completion_tokens: int | None
     total_tokens: int | None
+
+    def __post_init__(self) -> None:
+        # Cap at RECORD-BUILD time: both the pre-route and
+        # routed builders construct a SpendRecord, so the cap holds on every
+        # path that writes a line. Idempotent for already-capped values.
+        if len(self.model) > MAX_MODEL_CHARS:
+            object.__setattr__(self, "model", self.model[:MAX_MODEL_CHARS])
 
     def to_json_line(self) -> str:
         return json.dumps(

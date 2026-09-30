@@ -4,10 +4,16 @@ skipping, 3-consecutive-failure cooldown, skip-while-cooling, recovery
 after cooldown, reset-on-success. Zero timing dependence."""
 
 import os
+import pathlib
+import sys
 import unittest
 from unittest import mock
 
-from keysmith.keys import AUTH_FAILURE_LIMIT, KeyPool, read_key_value
+_REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from keysmith.keys import AUTH_FAILURE_LIMIT, KeyPool, read_key_value  # noqa: E402
 
 ENV = {"KEY_A": "sk-a", "KEY_B": "sk-b", "KEY_C": "sk-c"}
 

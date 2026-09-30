@@ -64,14 +64,16 @@ def ok_completion_body(request_body: bytes, usage: tuple[int, int, int]) -> byte
     return json.dumps(completion).encode("utf-8")
 
 
-def auth_error_body(authorization: str) -> bytes:
+def auth_error_body(authorization: str, code: str = "invalid_api_key") -> bytes:
     """401 body ECHOING the Authorization value — the deliberate
-    key-in-error-string plant for the redaction tests."""
+    key-in-error-string plant for the redaction tests. ``code`` is the
+    OpenAI-style error code carried in the body (keysmith derives the
+    upstream error kind from it via an allowlist map)."""
     error = {
         "error": {
             "message": f"Incorrect API key provided: {authorization}.",
             "type": "invalid_request_error",
-            "code": "invalid_api_key",
+            "code": code,
         }
     }
     return json.dumps(error).encode("utf-8")
@@ -89,6 +91,7 @@ class _FakeHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()  # flush the buffered status line + headers
         self.wfile.write(payload)
 
     def do_POST(self) -> None:
@@ -102,14 +105,22 @@ class _FakeHandler(BaseHTTPRequestHandler):
             authorization = self.headers.get("Authorization", "")
             self.fake._record(RecordedRequest("POST", self.path, authorization, body))
             if authorization in self.fake._fail_auth_values:
-                self._emit(self.fake._fail_auth_status, auth_error_body(authorization), "application/json")
+                payload = (
+                    self.fake.auth_error_body_override
+                    if self.fake.auth_error_body_override is not None
+                    else auth_error_body(authorization, self.fake._fail_auth_code)
+                )
+                self._emit(self.fake._fail_auth_status, payload, "application/json")
                 return
-            payload = ok_completion_body(body, self.fake._usage)
-            if self.fake._echo_auth_in_success_body and authorization.startswith("Bearer "):
-                data = json.loads(payload.decode("utf-8"))
-                bearer_value = authorization[len("Bearer "):]
-                data["choices"][0]["message"]["content"] += f" [bearer was {bearer_value}]"
-                payload = json.dumps(data).encode("utf-8")
+            if self.fake.success_body_override is not None:
+                payload = self.fake.success_body_override
+            else:
+                payload = ok_completion_body(body, self.fake._usage)
+                if self.fake._echo_auth_in_success_body and authorization.startswith("Bearer "):
+                    data = json.loads(payload.decode("utf-8"))
+                    bearer_value = authorization[len("Bearer "):]
+                    data["choices"][0]["message"]["content"] += f" [bearer was {bearer_value}]"
+                    payload = json.dumps(data).encode("utf-8")
             self._emit(200, payload, "application/json")
         except Exception:
             self.close_connection = True
@@ -152,13 +163,25 @@ class FakeUpstream:
         *,
         fail_auth_values: frozenset[str] = frozenset(),
         fail_auth_status: int = 401,
+        fail_auth_code: str = "invalid_api_key",
         usage: tuple[int, int, int] = (11, 7, 18),
         echo_auth_in_success_body: bool = False,
+        success_body_override: bytes | None = None,
+        auth_error_body_override: bytes | None = None,
     ) -> None:
         self._fail_auth_values = frozenset(fail_auth_values)
         self._fail_auth_status = int(fail_auth_status)
+        self._fail_auth_code = str(fail_auth_code)
         self._usage = tuple(usage)
         self._echo_auth_in_success_body = bool(echo_auth_in_success_body)
+        # Variant-form plants: verbatim response bodies carrying key
+        # material in serializations json.dumps can never emit (UPPERCASE-hex
+        # \uXXXX escapes, double-escaped forms). ``json.dumps`` always
+        # produces canonical lowercase-hex escapes, so a body whose TEXT must
+        # carry a variant verbatim has to be planted as raw bytes. Public
+        # mutable attributes: a test plants per request and clears after.
+        self.success_body_override = success_body_override
+        self.auth_error_body_override = auth_error_body_override
         self._lock = threading.Lock()
         self._requests: list[RecordedRequest] = []
         self._httpd: _FakeHTTPServer | None = None

@@ -54,24 +54,30 @@ class Route:
 
 def split_model(model: str) -> tuple[str, str]:
     """'glm/glm-4.8' -> ('glm', 'glm-4.8'); ValueError unless the string has
-    exactly one '/' and both halves are nonempty."""
+    exactly one '/' and both halves are nonempty.
+
+    NO-REPR LAW: client-controlled strings are embedded with plain quotes,
+    never ``{...!r}``. repr() pre-escapes (a backslash becomes ``\\\\``),
+    and json.dumps then escapes AGAIN — a second escaping layer the vault's
+    escaped-twin redaction cannot match (the decoded-walk tests pin this)."""
     parts = model.split("/")
     if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise ValueError(f"model must look like '<provider>/<model>', got {model!r}")
+        raise ValueError(f"model must look like '<provider>/<model>', got '{model}'")
     return parts[0], parts[1]
 
 
 def resolve_route(cfg: Config, model: str) -> Route:
     """Deny-by-default: split, require the provider id in cfg.providers,
     require the model half in the provider's model map. Never guesses or
-    falls back (charter line 16)."""
+    falls back. NO-REPR LAW applies to every embedded
+    client-controlled string (see split_model)."""
     provider_id, model_name = split_model(model)
     provider = cfg.providers.get(provider_id)
     if provider is None:
-        raise ValueError(f"unknown provider {provider_id!r} in model {model!r}")
+        raise ValueError(f"unknown provider '{provider_id}' in model '{model}'")
     upstream_model = provider.models.get(model_name)
     if upstream_model is None:
-        raise ValueError(f"unknown model {model_name!r} for provider {provider_id!r}")
+        raise ValueError(f"unknown model '{model_name}' for provider '{provider_id}'")
     return Route(
         provider_id=provider_id,
         public_model=model,
@@ -87,28 +93,26 @@ def error_json(
     *,
     code: str | None = None,
     upstream_status: int | None = None,
-    upstream_error: object | None = None,
     error_kind: str | None = None,
 ) -> bytes:
-    """OpenAI-shaped error envelope as UTF-8 bytes."""
+    """OpenAI-shaped error envelope as UTF-8 bytes.
+
+    Structural redaction law: client-facing envelopes NEVER embed
+    upstream-derived payloads — only the numeric ``upstream_status`` plus a
+    fixed, key-free message. There is deliberately no parameter for an
+    upstream error body: embedding one re-serializes attacker/upstream
+    text, and any escaping that differs from the raw secret value (non-ASCII
+    ``\\uXXXX``, ``\\"``, ``\\\\``) sails past the vault's raw-substring
+    redaction (the envelope-level adversarial test pins this).
+    """
     err: dict[str, object] = {"message": message, "type": err_type}
     if code is not None:
         err["code"] = code
     if upstream_status is not None:
         err["upstream_status"] = upstream_status
-    if upstream_error is not None:
-        err["upstream_error"] = upstream_error
     if error_kind is not None:
         err["error_kind"] = error_kind
     return json.dumps({"error": err}, separators=(",", ":")).encode("utf-8")
-
-
-def _try_json_object(body: bytes) -> object | None:
-    try:
-        data = json.loads(body.decode("utf-8", "replace"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    return data
 
 
 class _Diagnostics:
@@ -155,11 +159,15 @@ class KeysmithHTTPServer(ThreadingHTTPServer):
 
         The stock socketserver behaviour writes a raw traceback to the
         standard error stream; this override writes to no stream at all.
+
+        Order matters: REDACT first, truncate after. Truncating
+        first can cut a secret in half and leave a partial fragment that
+        redact() can no longer match.
         """
-        text = traceback.format_exc()
+        text = self.keysmith.vault.redact(traceback.format_exc())
         if len(text) > _TRACEBACK_CHAR_LIMIT:
             text = text[:_TRACEBACK_CHAR_LIMIT]
-        self.diagnostics.append(self.keysmith.vault.redact(text))
+        self.diagnostics.append(text)
 
 
 class KeysmithRequestHandler(BaseHTTPRequestHandler):
@@ -260,6 +268,9 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
             self.send_header(name, value)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        # send_response/send_header only buffer into _headers_buffer;
+        # end_headers() flushes them to the socket before the body.
+        self.end_headers()
         self.wfile.write(payload)
 
     # ------------------------------------------------------------------
@@ -308,10 +319,16 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def _check_token(self) -> bool:
+        """True iff the request carries 'Bearer <token>' (RFC 7235: the
+        auth-scheme production is case-insensitive, so 'bearer'/'BEARER'/
+        'BeArEr' are equivalent; the token comparison itself stays exact).
+        A scheme with no space or no credentials never authenticates."""
         header = self.headers.get("Authorization")
-        if not header or not header.startswith("Bearer "):
+        if not header:
             return False
-        provided = header[len("Bearer "):]
+        scheme, space, provided = header.partition(" ")
+        if not space or scheme.lower() != "bearer":
+            return False
         expected = self.server.keysmith.token
         return hmac.compare_digest(
             expected.encode("utf-8"), provided.encode("utf-8")
@@ -335,11 +352,16 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
 
     def _internal_error(self) -> None:
         """Catch-all for do_GET/do_POST bodies: redacted diagnostic plus a
-        500 JSON envelope (or nothing, if a response already went out)."""
-        text = traceback.format_exc()
+        500 JSON envelope (or nothing, if a response already went out).
+
+        Order matters: REDACT first, truncate after. Truncating
+        first can cut a secret in half and leave a partial fragment that
+        redact() can no longer match.
+        """
+        text = self.server.keysmith.vault.redact(traceback.format_exc())
         if len(text) > _TRACEBACK_CHAR_LIMIT:
             text = text[:_TRACEBACK_CHAR_LIMIT]
-        self.server.diagnostics.append(self.server.keysmith.vault.redact(text))
+        self.server.diagnostics.append(text)
         if self._emitted:
             self.close_connection = True
             return
@@ -445,7 +467,7 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
             return
         self._emit(
             404,
-            error_json(404, f"unknown path {path!r}", "invalid_request_error", code="path_not_found"),
+            error_json(404, f"unknown path '{path}'", "invalid_request_error", code="path_not_found"),
             _LOCAL_JSON,
             body_drained=not self._unread_body(),
         )
@@ -471,7 +493,9 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
     def _handle_post(self) -> None:
         start = time.monotonic()
         if not self._check_token():
-            self._spend_pre_route(start, status=401)
+            # Auth before logging: unauthenticated 401s write NO
+            # spend record — aligned with GET 401 and unknown-path 404, and
+            # never persisted before the caller proves it holds the token.
             self._emit(
                 401,
                 error_json(401, "missing or invalid local token", "keysmith_auth"),
@@ -484,7 +508,7 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
             # Diagnostics-only: unknown paths never write a spend record.
             self._emit(
                 404,
-                error_json(404, f"unknown path {path!r}", "invalid_request_error", code="path_not_found"),
+                error_json(404, f"unknown path '{path}'", "invalid_request_error", code="path_not_found"),
                 _LOCAL_JSON,
                 body_drained=not self._unread_body(),
             )
@@ -551,7 +575,11 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
             self._respond_pre_route(start, 400, "request body must include a nonempty string 'model'")
             return
         if payload.get("stream"):
-            self._respond_pre_route(start, 400, "streaming is not supported in v0.1", code="streaming_not_supported")
+            self._respond_pre_route(
+                start, 400,
+                "streaming is on the roadmap, not supported in v0.1: resend with stream omitted or false",
+                code="streaming_not_supported",
+            )
             return
 
         try:
@@ -637,12 +665,15 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
-        # Every attempt failed upstream authentication.
+        # Every attempt failed upstream authentication. The envelope carries
+        # ONLY the numeric upstream status, a fixed, key-free message, and
+        # a closed-vocabulary error_kind. The upstream 401 body (which may
+        # echo the bearer value, escaped) IS parsed below — for the
+        # allowlist-mapped error_kind and for the usage counts in the spend
+        # record — but it is never embedded or re-serialized into
+        # client-facing bytes.
         assert last_auth_result is not None
-        envelope_kwargs: dict[str, object] = {"upstream_status": last_auth_result.status}
-        parsed_error = _try_json_object(last_auth_result.body)
-        if parsed_error is not None:
-            envelope_kwargs["upstream_error"] = parsed_error
+        error_kind = upstream.upstream_error_kind(last_auth_result.body)
         self._spend_routed(
             start, route=route, model=model, key_alias=last_alias,
             status=last_auth_result.status, error_kind=None,
@@ -654,7 +685,8 @@ class KeysmithRequestHandler(BaseHTTPRequestHandler):
                 502,
                 "all configured keys failed authentication",
                 "keysmith_upstream",
-                **envelope_kwargs,
+                upstream_status=last_auth_result.status,
+                error_kind=error_kind,
             ),
             _LOCAL_JSON,
             body_drained=True,
@@ -675,6 +707,17 @@ class KeysmithServer:
         port: int = 0,
         max_attempts: int | None = None,
     ) -> None:
+        # An empty or whitespace-only token is a
+        # misconfiguration, not a security posture — with token='' a bare
+        # 'Authorization: Bearer ' (empty credentials) would authenticate
+        # because hmac.compare_digest("", "") is True. Reject at the class
+        # level so such a server cannot exist.
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError(
+                "client token must be a nonempty string that is not "
+                "whitespace-only: an empty token would make a bare "
+                "'Bearer ' header authenticate"
+            )
         self.config = config
         self.token = token
         self.spend_log = spend_log
