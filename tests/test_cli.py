@@ -125,7 +125,10 @@ class CliFlagTests(unittest.TestCase):
         self.assertIn("config: providers.json", out)
         self.assertIn("spend log: spend.jsonl", out)
         factory.assert_called_once()
-        self.assertEqual(factory.call_args.kwargs, {"host": "127.0.0.1", "port": 8317})
+        self.assertEqual(
+            factory.call_args.kwargs,
+            {"config_path": "providers.json", "host": "127.0.0.1", "port": 8317},
+        )
         server = factory.return_value
         server.start.assert_called_once_with()
         server.stop.assert_called_once_with()
@@ -145,7 +148,39 @@ class CliFlagTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn(f"config: {config}", out)
         self.assertIn(f"spend log: {spend_log}", out)
-        self.assertEqual(factory.call_args.kwargs, {"host": "127.0.0.2", "port": 9599})
+        self.assertEqual(
+            factory.call_args.kwargs,
+            {"config_path": str(config), "host": "127.0.0.2", "port": 9599},
+        )
+
+    def test_startup_prints_clickable_dashboard_url(self):
+        # v0.2 polish bar: the dashboard URL is printed at startup next
+        # to the existing banner, derived from the (mocked) server.
+        server = mock.Mock(name="KeysmithServer")
+        server.url = "http://127.0.0.1:8317"
+        with (
+            mock.patch.dict(os.environ, {"KEYSMITH_TOKEN": TOKEN}),
+        ):
+            # Reuse the flag-default flow but intercept the factory to
+            # return our stub server with a stable URL.
+            previous_cwd = os.getcwd()
+            os.chdir(self.tmp)
+            try:
+                factory = mock.Mock(name="KeysmithServer factory")
+                factory.return_value = server
+                fake_time = mock.Mock(name="time")
+                fake_time.sleep.side_effect = KeyboardInterrupt
+                with (
+                    mock.patch.object(cli, "KeysmithServer", factory),
+                    mock.patch.object(cli, "time", fake_time),
+                    redirect_stdout(io.StringIO()) as out,
+                ):
+                    code = cli.main([])
+            finally:
+                os.chdir(previous_cwd)
+        self.assertEqual(code, 0)
+        self.assertIn("Dashboard: http://127.0.0.1:8317/", out.getvalue())
+        self.assertIn("KEYSMITH_TOKEN", out.getvalue())
 
 
 if __name__ == "__main__":
