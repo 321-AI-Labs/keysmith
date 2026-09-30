@@ -139,7 +139,8 @@ it as a header to every dashboard request.
   consistently rather than inventing costs.
 - **Connect** — one copy-paste card per configured provider/model: the
   local endpoint, the `$KEYSMITH_TOKEN` placeholder, and a curl example.
-  The honest counterpart of "Sign in with ChatGPT": one place that
+  The honest counterpart of "Sign in with ChatGPT" (as announced
+  2026-09-29): one place that
   shows exactly how any OpenAI-compatible tool attaches.
 - **Setup wizard** — a guided form that builds `providers.json` through
   the same validator startup uses (unknown fields are rejected with a

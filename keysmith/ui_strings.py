@@ -1,6 +1,8 @@
 """The ONE module holding every NEW user-visible string (naming law,
-UI-CHARTER-V02). The future owner rename sweep must be a single pass over
-this file.
+UI-CHARTER-V02). For everything introduced since v0.1, the future owner
+rename sweep is a single pass over this file: tests/test_ui_strings_law.py
+pins that the dashboard ships no prose outside it. (Pre-existing v0.1
+strings stay with their callers by design; see the rules below.)
 
 Rules for this module:
 
@@ -94,6 +96,7 @@ PAGE_TEXT: dict[str, str] = {
         " page."
     ),
     # Navigation
+    "navAriaLabel": "keysmith",
     "navStatus": "Status",
     "navSpend": "Spend",
     "navConnect": "Connect",

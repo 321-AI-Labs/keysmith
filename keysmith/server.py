@@ -175,7 +175,7 @@ class KeysmithHTTPServer(ThreadingHTTPServer):
 class KeysmithRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     timeout = 60
-    server_version = "keysmith/0.1"
+    server_version = "keysmith/0.2"
 
     # Per-request state; reset at the top of every do_* method.
     _body_read: bool = False

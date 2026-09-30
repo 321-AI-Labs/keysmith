@@ -9,7 +9,10 @@ Laws this module obeys:
   that redaction would need to chase.
 * EVERY user-visible string comes from ui_strings (naming law): the HTML
   carries ``data-t`` hooks and the JavaScript reads the one JSON blob
-  embedded from ``ui_strings.PAGE_TEXT``. No prose lives in tags or JS.
+  embedded from ``ui_strings.PAGE_TEXT``. No prose lives in tags or JS;
+  this is machine-checked by tests/test_ui_strings_law.py (empty hooks,
+  no literal aria-label/placeholder/title attributes, no non-empty
+  ``T.* || "..."`` fallbacks).
 * Fully offline (charter scope item 6): no external requests of any
   kind, no CDN, no web fonts; system font stack only. This is machine-
   checked by tests (no ``http``-prefixed attribute values, no
@@ -219,20 +222,21 @@ fieldset.provider .span-2 { grid-column: 1 / -1; }
 
 # Static skeleton. Every visible text node is a data-t hook filled from
 # ui_strings.PAGE_TEXT at page init, so this markup itself carries no
-# prose (naming law). data-t-placeholder / data-t-title fill attributes.
+# prose (naming law). data-t-placeholder / data-t-title / data-t-aria-label
+# fill attributes.
 _HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title data-t="documentTitle">keysmith</title>
+<title data-t="documentTitle"></title>
 <style>__CSS__</style>
 </head>
 <body>
 <a class="skip-link" href="#main" data-t="skipToContent"></a>
 <header class="top">
   <div class="brand">
-    <span class="brand-name">keysmith</span>
+    <span class="brand-name" data-t="headerTitle"></span>
     <span class="brand-sub" data-t="headerSubtitle"></span>
   </div>
   <div class="header-right">
@@ -259,7 +263,7 @@ _HTML = """<!DOCTYPE html>
 </section>
 
 <div id="app" hidden>
-  <nav class="tabs" role="tablist" aria-label="keysmith">
+  <nav class="tabs" role="tablist" data-t-aria-label="navAriaLabel">
     <button class="tab" role="tab" type="button" id="tab-status" aria-controls="panel-status" aria-selected="true" data-t="navStatus"></button>
     <button class="tab" role="tab" type="button" id="tab-spend" aria-controls="panel-spend" aria-selected="false" tabindex="-1" data-t="navSpend"></button>
     <button class="tab" role="tab" type="button" id="tab-connect" aria-controls="panel-connect" aria-selected="false" tabindex="-1" data-t="navConnect"></button>
@@ -393,6 +397,10 @@ _SCRIPT = r"""
     for (i = 0; i < ti.length; i++) {
       ti[i].setAttribute("title", T[ti[i].getAttribute("data-t-title")] || "");
     }
+    var al = document.querySelectorAll("[data-t-aria-label]");
+    for (i = 0; i < al.length; i++) {
+      al[i].setAttribute("aria-label", T[al[i].getAttribute("data-t-aria-label")] || "");
+    }
     if (T.htmlLang) { document.documentElement.setAttribute("lang", T.htmlLang); }
   }
 
@@ -411,13 +419,13 @@ _SCRIPT = r"""
     if (!kind) { slot.hidden = true; slot.classList.remove("error"); return; }
     slot.hidden = false;
     slot.classList.toggle("error", kind === "error");
-    if (kind === "loading") { text(slot, T.stateLoading || "Loading..."); }
+    if (kind === "loading") { text(slot, T.stateLoading || ""); }
     else { text(slot, message || ""); }
     if (kind === "error") {
       var retry = document.createElement("button");
       retry.type = "button";
       retry.className = "btn small";
-      text(retry, T.stateRetry || "Retry");
+      text(retry, T.stateRetry || "");
       retry.addEventListener("click", function () { loadPanel(name); });
       slot.appendChild(document.createElement("br"));
       slot.appendChild(retry);
@@ -445,7 +453,7 @@ _SCRIPT = r"""
   function setLive(ok) {
     var chip = el("live-chip");
     chip.className = "chip " + (ok ? "ok" : "bad");
-    text(chip, ok ? (T.liveChip || "live") : (T.liveChipError || "offline"));
+    text(chip, ok ? (T.liveChip || "") : (T.liveChipError || ""));
   }
 
   // ---- API -------------------------------------------------------------
@@ -562,7 +570,7 @@ _SCRIPT = r"""
     return wrap;
   }
   function copyButton(getText) {
-    var btn = tag("button", "btn small", T.connectCopy || "Copy");
+    var btn = tag("button", "btn small", T.connectCopy || "");
     btn.type = "button";
     btn.addEventListener("click", function () {
       copyText(getText(), btn);
@@ -571,7 +579,7 @@ _SCRIPT = r"""
   }
   function copyText(value, btn) {
     var restore = function () {
-      text(btn, T.connectCopy || "Copy");
+      text(btn, T.connectCopy || "");
       btn.disabled = false;
     };
     var fail = function () {
@@ -600,7 +608,7 @@ _SCRIPT = r"""
       if (ok) {
         text(btn, T.connectCopied || "");
         setTimeout(function () {
-          text(btn, T.connectCopy || "Copy");
+          text(btn, T.connectCopy || "");
         }, 1500);
       } else { fail(); }
     } catch (e) { fail(); }
@@ -612,19 +620,19 @@ _SCRIPT = r"""
     if (key.cooling) {
       chip.classList.add("warn");
       var seconds = Math.ceil(Number(key.cooldown_remaining_seconds || 0));
-      text(chip, fmt(T.statusCooldownLeft || "cooldown {s}s left", { s: seconds }));
+      text(chip, fmt(T.statusCooldownLeft || "", { s: seconds }));
     } else if (key.auth_failures > 0) {
       chip.classList.add("bad");
-      var template = key.auth_failures === 1 ? (T.statusKeyFailures || "{n} auth failure") : (T.statusKeyFailuresPlural || "{n} auth failures");
+      var template = key.auth_failures === 1 ? (T.statusKeyFailures || "") : (T.statusKeyFailuresPlural || "");
       text(chip, fmt(template, { n: key.auth_failures }));
     } else {
       chip.classList.add("ok");
-      text(chip, T.statusKeyReady || "ready");
+      text(chip, T.statusKeyReady || "");
     }
     return chip;
   }
   function renderStatus(data) {
-    text(el("status-counts"), fmtInt(data.provider_count) + " " + (T.statusProviderCount || "providers") + ", " + fmtInt(data.model_count) + " " + (T.statusModelCount || "models"));
+    text(el("status-counts"), fmtInt(data.provider_count) + " " + (T.statusProviderCount || "") + ", " + fmtInt(data.model_count) + " " + (T.statusModelCount || ""));
     var body = clear(el("status-body"));
     if (!data.providers.length) {
       setPanelState("status", "empty", T.statusEmpty || "");
@@ -634,7 +642,7 @@ _SCRIPT = r"""
       var card = tag("div", "card");
       card.appendChild(tag("h3", "mono", provider.id));
       var dl = tag("dl", "kv");
-      dl.appendChild(kv(T.statusBaseURLLabel || "base URL", tag("span", "mono", provider.base_url)));
+      dl.appendChild(kv(T.statusBaseURLLabel || "", tag("span", "mono", provider.base_url)));
       var modelsWrap = tag("div");
       var table = tag("table");
       var head = tag("tr");
@@ -652,7 +660,7 @@ _SCRIPT = r"""
       });
       table.appendChild(tbody);
       modelsWrap.appendChild(table);
-      dl.appendChild(kv(T.statusModelsLabel || "models", modelsWrap));
+      dl.appendChild(kv(T.statusModelsLabel || "", modelsWrap));
       var keysWrap = tag("div", "keys-list");
       provider.keys.forEach(function (key) {
         var row = tag("div", "key-row");
@@ -661,7 +669,7 @@ _SCRIPT = r"""
         keysWrap.appendChild(row);
       });
       if (!provider.keys.length) { keysWrap.appendChild(tag("span", "note", "-")); }
-      dl.appendChild(kv(T.statusKeysLabel || "key pool", keysWrap));
+      dl.appendChild(kv(T.statusKeysLabel || "", keysWrap));
       card.appendChild(dl);
       var note = tag("p", "note", T.statusAliasNote || "");
       card.appendChild(note);
@@ -694,9 +702,9 @@ _SCRIPT = r"""
     var table = tag("table");
     var thead = tag("thead");
     var head = tag("tr");
-    [nameKey === "provider" ? (T.spendTableProvider || "provider") : (T.spendTableModel || "model"),
-     T.spendCountColumn || "requests", T.spendOkColumn || "ok", T.spendFailedColumn || "failed",
-     T.spendTokensColumn || "tokens (p / c / t)"].forEach(function (label, index) {
+    [nameKey === "provider" ? (T.spendTableProvider || "") : (T.spendTableModel || ""),
+     T.spendCountColumn || "", T.spendOkColumn || "", T.spendFailedColumn || "",
+     T.spendTokensColumn || ""].forEach(function (label, index) {
       var th = tag("th", index > 0 ? "num" : null, label);
       head.appendChild(th);
     });
@@ -705,7 +713,7 @@ _SCRIPT = r"""
     var tbody = tag("tbody");
     rows.forEach(function (row) {
       var tr = tag("tr");
-      var name = row[nameKey] === "" && nameKey === "provider" ? (T.spendNoProvider || "(no provider)") : row[nameKey];
+      var name = row[nameKey] === "" && nameKey === "provider" ? (T.spendNoProvider || "") : row[nameKey];
       tr.appendChild(tag("td", nameIsMono ? "mono" : null, name));
       tr.appendChild(tag("td", "num", fmtInt(row.requests)));
       tr.appendChild(tag("td", "num", fmtInt(row.ok)));
@@ -735,9 +743,9 @@ _SCRIPT = r"""
     var table = tag("table");
     var thead = tag("thead");
     var head = tag("tr");
-    [T.spendTableWhen || "time", T.spendTableProvider || "provider", T.spendTableModel || "model",
-     T.spendTableAlias || "key", T.spendTableStatus || "status", T.spendTableLatency || "latency",
-     T.spendTableTokens || "tokens (prompt / completion / total)"].forEach(function (label, index) {
+    [T.spendTableWhen || "", T.spendTableProvider || "", T.spendTableModel || "",
+     T.spendTableAlias || "", T.spendTableStatus || "", T.spendTableLatency || "",
+     T.spendTableTokens || ""].forEach(function (label, index) {
       head.appendChild(tag("th", index >= 4 ? "num" : null, label));
     });
     thead.appendChild(head);
@@ -746,7 +754,7 @@ _SCRIPT = r"""
     rows.forEach(function (row) {
       var tr = tag("tr");
       tr.appendChild(tag("td", null, fmtTime(row.ts)));
-      tr.appendChild(tag("td", "mono", row.provider === "" ? (T.spendNoProvider || "(no provider)") : row.provider));
+      tr.appendChild(tag("td", "mono", row.provider === "" ? (T.spendNoProvider || "") : row.provider));
       tr.appendChild(tag("td", "mono", row.model));
       tr.appendChild(tag("td", "mono", row.key_alias === "" ? "-" : row.key_alias));
       var statusCell = tag("td", "num");
@@ -763,19 +771,19 @@ _SCRIPT = r"""
     state.spend = data;
     var summary = clear(el("spend-summary"));
     var totals = data.totals || {};
-    summary.appendChild(spendSummaryCard(T.spendTotalRequests || "requests", fmtInt(totals.requests)));
-    summary.appendChild(spendSummaryCard(T.spendOk || "ok", fmtInt(totals.ok)));
-    summary.appendChild(spendSummaryCard(T.spendFailed || "failed", fmtInt(totals.failed)));
-    summary.appendChild(spendSummaryCard(T.spendPromptTokens || "prompt tokens", fmtInt(totals.prompt_tokens)));
-    summary.appendChild(spendSummaryCard(T.spendCompletionTokens || "completion tokens", fmtInt(totals.completion_tokens)));
-    summary.appendChild(spendSummaryCard(T.spendTotalTokens || "total tokens", fmtInt(totals.total_tokens)));
+    summary.appendChild(spendSummaryCard(T.spendTotalRequests || "", fmtInt(totals.requests)));
+    summary.appendChild(spendSummaryCard(T.spendOk || "", fmtInt(totals.ok)));
+    summary.appendChild(spendSummaryCard(T.spendFailed || "", fmtInt(totals.failed)));
+    summary.appendChild(spendSummaryCard(T.spendPromptTokens || "", fmtInt(totals.prompt_tokens)));
+    summary.appendChild(spendSummaryCard(T.spendCompletionTokens || "", fmtInt(totals.completion_tokens)));
+    summary.appendChild(spendSummaryCard(T.spendTotalTokens || "", fmtInt(totals.total_tokens)));
     var capped = el("spend-capped");
     capped.hidden = !data.capped;
     if (data.capped) { text(capped, fmt(T.spendCappedNote || "", { shown: (data.rows || []).length, total: data.row_count })); }
     renderSpendRows();
     var totalsWrap = clear(el("spend-totals"));
-    totalsWrap.appendChild(totalsTable(T.spendByProvider || "Totals by provider", data.by_provider || [], "provider", false));
-    totalsWrap.appendChild(totalsTable(T.spendByModel || "Totals by model", data.by_model || [], "model", true));
+    totalsWrap.appendChild(totalsTable(T.spendByProvider || "", data.by_provider || [], "provider", false));
+    totalsWrap.appendChild(totalsTable(T.spendByModel || "", data.by_model || [], "model", true));
   }
   function refreshSpend() {
     return api("GET", "/api/spend").then(function (r) {
@@ -796,22 +804,22 @@ _SCRIPT = r"""
       var box = tag("div", "card");
       box.appendChild(tag("h3", "mono", card.model));
       var dl = tag("dl", "kv");
-      dl.appendChild(kv(T.spendTableProvider || "provider", tag("span", null, card.provider)));
+      dl.appendChild(kv(T.spendTableProvider || "", tag("span", null, card.provider)));
       var baseNode = tag("span", "mono", card.base_url);
-      dl.appendChild(kv(T.statusBaseURLLabel || "base URL", baseNode));
+      dl.appendChild(kv(T.statusBaseURLLabel || "", baseNode));
       box.appendChild(dl);
       var endpointLine = tag("div", "endpoint-line");
       var code = tag("code", "mono", card.endpoint);
       endpointLine.appendChild(code);
       var btn = copyButton(function () { return card.endpoint; });
-      btn.setAttribute("aria-label", (T.connectEndpointLabel || "endpoint") + ": " + card.model);
+      btn.setAttribute("aria-label", (T.connectEndpointLabel || "") + ": " + card.model);
       endpointLine.appendChild(btn);
       box.appendChild(endpointLine);
-      box.appendChild(tag("p", "field-help", (T.connectCurlLabel || "curl example") + ":"));
+      box.appendChild(tag("p", "field-help", (T.connectCurlLabel || "") + ":"));
       var pre = tag("pre", "curl mono", card.curl);
       box.appendChild(pre);
       var curlCopy = copyButton(function () { return card.curl; });
-      curlCopy.setAttribute("aria-label", (T.connectCurlLabel || "curl example") + ": " + card.model);
+      curlCopy.setAttribute("aria-label", (T.connectCurlLabel || "") + ": " + card.model);
       box.appendChild(curlCopy);
       body.appendChild(box);
     });
@@ -836,7 +844,7 @@ _SCRIPT = r"""
     fs.appendChild(legend);
     var head = tag("div", "provider-head");
     var idField = tag("div", "field-grow");
-    idField.appendChild(tag("label", "field-label", T.setupIdLabel || "provider id"));
+    idField.appendChild(tag("label", "field-label", T.setupIdLabel || ""));
     var idInput = tag("input");
     idInput.type = "text";
     idInput.className = "wiz-id";
@@ -846,7 +854,7 @@ _SCRIPT = r"""
     idField.appendChild(tag("p", "field-help", T.setupIdHelp || ""));
     head.appendChild(idField);
     var baseField = tag("div", "field-grow");
-    baseField.appendChild(tag("label", "field-label", T.setupBaseURLLabel || "base URL"));
+    baseField.appendChild(tag("label", "field-label", T.setupBaseURLLabel || ""));
     var baseInput = tag("input");
     baseInput.type = "text";
     baseInput.className = "wiz-base-url mono";
@@ -854,7 +862,7 @@ _SCRIPT = r"""
     baseInput.setAttribute("spellcheck", "false");
     baseField.appendChild(baseInput);
     head.appendChild(baseField);
-    var remove = tag("button", "btn danger small", T.setupRemoveProvider || "Remove");
+    var remove = tag("button", "btn danger small", T.setupRemoveProvider || "");
     remove.type = "button";
     remove.addEventListener("click", function () {
       fs.parentNode.removeChild(fs);
@@ -863,7 +871,7 @@ _SCRIPT = r"""
     head.appendChild(remove);
     fs.appendChild(head);
     var keysField = tag("div", "span-2");
-    keysField.appendChild(tag("label", "field-label", T.setupKeysLabel || "keys"));
+    keysField.appendChild(tag("label", "field-label", T.setupKeysLabel || ""));
     var keysArea = tag("textarea");
     keysArea.className = "wiz-keys";
     keysArea.value = (initial.keys || []).join("\n");
@@ -871,14 +879,14 @@ _SCRIPT = r"""
     keysField.appendChild(tag("p", "field-help", T.setupKeysHelp || ""));
     fs.appendChild(keysField);
     var modelsField = tag("div", "span-2");
-    modelsField.appendChild(tag("label", "field-label", T.setupModelsLabel || "models"));
+    modelsField.appendChild(tag("label", "field-label", T.setupModelsLabel || ""));
     var modelsArea = tag("textarea");
     modelsArea.className = "wiz-models";
     modelsArea.value = modelText;
     modelsField.appendChild(modelsArea);
     fs.appendChild(modelsField);
     var cooldownField = tag("div");
-    cooldownField.appendChild(tag("label", "field-label", T.setupCooldownLabel || "cooldown"));
+    cooldownField.appendChild(tag("label", "field-label", T.setupCooldownLabel || ""));
     var cooldownInput = tag("input");
     cooldownInput.type = "text";
     cooldownInput.className = "wiz-cooldown";
@@ -887,7 +895,7 @@ _SCRIPT = r"""
     cooldownField.appendChild(cooldownInput);
     fs.appendChild(cooldownField);
     var timeoutField = tag("div");
-    timeoutField.appendChild(tag("label", "field-label", T.setupTimeoutLabel || "timeout"));
+    timeoutField.appendChild(tag("label", "field-label", T.setupTimeoutLabel || ""));
     var timeoutInput = tag("input");
     timeoutInput.type = "text";
     timeoutInput.className = "wiz-timeout";
@@ -902,7 +910,7 @@ _SCRIPT = r"""
     insecure.className = "wiz-insecure";
     insecure.checked = !!initial.allow_insecure;
     insecureLabel.appendChild(insecure);
-    insecureLabel.appendChild(document.createTextNode(" " + (T.setupInsecureLabel || "allow_insecure")));
+    insecureLabel.appendChild(document.createTextNode(" " + (T.setupInsecureLabel || "")));
     insecureWrap.appendChild(insecureLabel);
     fs.appendChild(insecureWrap);
     return fs;
@@ -913,7 +921,7 @@ _SCRIPT = r"""
     writeBtn.disabled = !data.writable;
     if (!data.writable) { writeBtn.setAttribute("title", T.setupWriteDisabled || ""); }
     var pathLine = el("setup-path");
-    text(pathLine, data.config_path ? (T.setupCurrentPath || "Config file") + ": " + data.config_path : (T.setupNoCurrentFile || ""));
+    text(pathLine, data.config_path ? (T.setupCurrentPath || "") + ": " + data.config_path : (T.setupNoCurrentFile || ""));
     el("setup-comment").value = (data.document && typeof data.document._comment === "string") ? data.document._comment : "";
     var holders = clear(el("setup-providers"));
     var providers = (data.document && data.document.providers) || {};
@@ -954,7 +962,7 @@ _SCRIPT = r"""
       var cooldownText = fs.querySelector(".wiz-cooldown").value.trim();
       var timeoutText = fs.querySelector(".wiz-timeout").value.trim();
       var insecure = fs.querySelector(".wiz-insecure").checked;
-      if (!id) { errors.push(T.setupErrIdEmpty || "provider id is empty"); return; }
+      if (!id) { errors.push(T.setupErrIdEmpty || ""); return; }
       if (seen[id]) { errors.push(fmt(T.setupErrIdDuplicate || "", { id: id })); return; }
       seen[id] = true;
       var provider = {};
@@ -1076,7 +1084,7 @@ _SCRIPT = r"""
       state.token = value;
       var btn = el("login-submit");
       btn.disabled = true;
-      text(btn, T.loginChecking || "...");
+      text(btn, T.loginChecking || "");
       api("GET", "/api/status").then(function (r) {
         if (r.status === 200) { el("login-error").hidden = true; bootApp(); }
         else { throw r; }
