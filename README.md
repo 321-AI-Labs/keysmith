@@ -21,8 +21,15 @@ usage record per authenticated chat request to a JSONL spend log.
 - Python 3.11+, **standard library only** — no third-party packages, at
   runtime or in the test suite (machine-checked by `tests/test_imports.py`).
 - Windows-first, POSIX-honest. Binds `127.0.0.1` by default.
-- One local token (env `KEYSMITH_TOKEN`) gates every endpoint, so random
-  local processes cannot spend your keys.
+- One local token (env `KEYSMITH_TOKEN`) gates every API endpoint and the
+  dashboard, so random local processes cannot spend your keys. The one
+  exception is the dashboard's own login page at `/`: it is served without
+  a token because a browser cannot send a Bearer header before loading a
+  page. It is a static shell with zero data in it (byte-identical for
+  every client; test-pinned), and every route that carries data —
+  status, spend, connections, and the wizard preview/write that can
+  modify `providers.json` — answers an unauthenticated request with a
+  401 JSON envelope.
 - A key that fails authentication 3 times in a row cools down for a
   configurable period and is skipped; it recovers without a restart.
 - Unknown provider or model → a 404 JSON error. keysmith never guesses and
@@ -31,7 +38,9 @@ usage record per authenticated chat request to a JSONL spend log.
 ## What it is NOT (v0.1)
 
 - Not a billing system, not budgets beyond the spend log.
-- Not multi-tenant, not hosted, no admin UI.
+- Not multi-tenant, not hosted, no remote access. The dashboard is a
+  local, token-gated face on the same loopback server (see below) —
+  not an admin console anyone outside this machine can reach.
 - No streaming: `stream: true` is rejected with a clear 400. SSE
   passthrough is a roadmap item, not a claim.
 - No embeddings or other endpoints (roadmap).
@@ -108,6 +117,44 @@ curl http://127.0.0.1:8317/v1/chat/completions \
 CLI flags: `--config`, `--spend-log`, `--host`, `--port` (defaults
 `providers.json`, `spend.jsonl`, `127.0.0.1`, 8317). A missing
 `KEYSMITH_TOKEN` or an invalid config aborts startup with a diagnostic.
+
+## Local dashboard
+
+`python -m keysmith` also serves a dashboard at the root URL (printed at
+startup next to the listening banner). It is stdlib-only like the rest
+of keysmith: no CDN, no web fonts, no third-party JavaScript, fully
+offline. Open it in a browser, paste the value of `KEYSMITH_TOKEN` once,
+and the page keeps the token in memory only (never on disk), attaching
+it as a header to every dashboard request.
+
+- **Status** — the running config summary: providers, base URLs, model
+  mappings, and the key pool by env var NAME with auth-failure counters
+  and cooldown timers. Key values are never readable by the dashboard;
+  there is no code path from the panels to a key value.
+- **Spend** — the JSONL spend log as a filterable table (provider,
+  model, key alias, status, latency, token counts) with per-provider and
+  per-model totals. Totals come from a pure aggregation function
+  unit-tested against a fixture log with hand-computed pinned totals.
+  The log records token counts, not money; the dashboard formats them
+  consistently rather than inventing costs.
+- **Connect** — one copy-paste card per configured provider/model: the
+  local endpoint, the `$KEYSMITH_TOKEN` placeholder, and a curl example.
+  The honest counterpart of "Sign in with ChatGPT": one place that
+  shows exactly how any OpenAI-compatible tool attaches.
+- **Setup wizard** — a guided form that builds `providers.json` through
+  the same validator startup uses (unknown fields are rejected with a
+  message naming the path). The wizard accepts environment variable
+  NAMES only; it has no field that could hold a key value. Preview
+  validates without writing; Write saves atomically (temp file plus
+  rename) and tells you to restart keysmith to apply the change. On a
+  server started without a known config path, Write fails closed.
+
+Panels poll every 3 seconds (no streaming). Every dashboard response —
+HTML, JSON, error envelopes — goes through the same single `redact()`
+choke point as everything else keysmith emits, demonstrated by an
+adversarial sweep test that plants non-ASCII, quote and backslash key
+shapes plus secrets inside config model names, chat model strings and
+wizard input, then walks every surface.
 
 Windows note: in PowerShell use `$Env:KEYSMITH_TOKEN = "..."`; in cmd,
 `set KEYSMITH_TOKEN=...`. The `curl` example above uses POSIX quoting for
@@ -191,6 +238,18 @@ bounded 0.3 s sleep for cooldown recovery), keep-alive drain-or-close
 behavior over raw sockets, 405/400 JSON envelopes (no stdlib HTML pages),
 the handler catch-all, and a machine check that no file imports anything
 outside the standard library.
+
+The v0.2 dashboard tests add: byte-identity of the static shell across
+tokens and servers (the shell embeds no data), an auth matrix (every
+`/api/...` route without or with a wrong token returns a 401 JSON
+envelope, never HTML; an unauthenticated wizard write touches nothing),
+spend aggregation pinned against a fixture JSONL, wizard
+preview/write/fail-closed behavior including path-naming validator
+errors and atomic-write guarantees, wizard POST routes obeying the same
+body laws and keep-alive discipline as chat while writing no spend
+records, every shipped template flowing through the panel payload
+builders, and the adversarial dashboard redaction sweep described
+above.
 
 The same command runs on every push via GitHub Actions
 (`.github/workflows/ci.yml`, ubuntu-latest and windows-latest): the suite
